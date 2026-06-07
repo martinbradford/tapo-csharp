@@ -1,0 +1,8 @@
+{
+  "uuid": "tapo@martinalderson.com",
+  "name": "Tapo Plugs",
+  "description": "Control TP-Link Tapo smart plugs from the Quick Settings panel. Talks to the `tapo` CLI for discovery and on/off control.",
+  "shell-version": ["45", "46", "47", "48", "49", "50"],
+  "version": 1,
+  "url": "https://github.com/martinalderson/tapo-csharp"
+}

@@ -4,93 +4,81 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-TapoCSharp is a C# library and CLI tool for controlling TP-Link Tapo smart devices (primarily P100 smart plugs). It supports both KLAP and Passthrough protocols for device communication.
+Tapo is a Linux tool for controlling TP-Link Tapo smart plugs, in two parts:
 
-## Build & Development Commands
+1. **`tapo-cli/`** — a Rust CLI (binary name `tapo`) that discovers and controls
+   devices on the local network, built on the [`tapo`](https://crates.io/crates/tapo) crate.
+2. **`gnome-extension/tapo@martinalderson.com/`** — a GNOME Shell **Quick
+   Settings** extension (GJS) that shells out to the `tapo` binary.
+
+> History: this was originally a C# library/CLI. It was rebuilt in Rust because
+> the C# JSON data store corrupted under concurrent writes and devices had to be
+> added by IP. The old C# code is in git history before the `rust-rebuild-gnome`
+> work.
+
+## Architecture & key decisions
+
+- **Discovery, not scanning.** Devices are found via the Tapo UDP broadcast
+  protocol (port 20002) using the crate's `ApiClient::discover_devices`. No
+  manual IPs, no brute-force scan, and the cloud API is **not** used (it can't
+  return local IPs or control modern Tapo plugs).
+- **Credentials in the system keyring** (GNOME keyring via the freedesktop
+  Secret Service), through the `keyring` crate — never plaintext on disk. The
+  TP-Link account login is also the local KLAP device password, so on/off/status
+  need it; discovery does not.
+- **Disposable, corruption-proof cache.** The device list lives at
+  `~/.cache/tapo/devices.json`. Rules that prevent the old corruption:
+  only `discover` rewrites it; `status` never writes; every write is atomic
+  (temp file + rename); reads tolerate a missing/corrupt file (→ empty + hint).
+- **Extension does no crypto/network itself** (GJS lacks AES/RSA). It runs
+  `tapo … --json` via `Gio.Subprocess` asynchronously and parses the JSON.
+
+## CLI (`tapo-cli/`)
+
+- `src/main.rs` — clap CLI, command dispatch, human + `--json` output.
+- `src/store.rs` — `Device` model, atomic cache load/save, selector `resolve`.
+- `src/creds.rs` — keyring get/set/delete of `Credentials`.
+- `src/ops.rs` — discovery, on/off/toggle, parallel `status`, broadcast-target
+  detection, and re-discover-on-failure retry.
+
+Commands: `login`, `logout`, `discover`, `list`, `status`, `on/off/toggle <selector>`,
+`all on|off`. Every command accepts a global `--json`.
+
+### Build / run
 
 ```bash
-# Build the entire solution
-dotnet build
-
-# Run the CLI tool in development
-dotnet run --project TapoCSharp.Cli -- --help
-
-# Run the example project (requires environment variables)
-TAPO_USERNAME="user@email.com" TAPO_PASSWORD="password" IP_ADDRESS="192.168.0.250" dotnet run --project TapoCSharp.Example
-
-# Build release CLI for Linux x64
-dotnet publish TapoCSharp.Cli -c Release --self-contained -p:PublishSingleFile=true -r linux-x64
-
-# Build for other platforms
-dotnet publish TapoCSharp.Cli -c Release --self-contained -p:PublishSingleFile=true -r win-x64
-dotnet publish TapoCSharp.Cli -c Release --self-contained -p:PublishSingleFile=true -r osx-x64
-dotnet publish TapoCSharp.Cli -c Release --self-contained -p:PublishSingleFile=true -r osx-arm64
-dotnet publish TapoCSharp.Cli -c Release --self-contained -p:PublishSingleFile=true -r linux-arm64
+cd tapo-cli
+cargo build --release
+install -Dm755 target/release/tapo ~/.local/bin/tapo
+cargo run -- status          # dev run
 ```
 
-## Solution Structure
+The `tapo` crate requires Rust ≥ 1.88 and uses the tokio async runtime.
 
-The solution contains three main projects:
+## GNOME extension
 
-- **TapoCSharp** - Core library containing protocol implementations
-- **TapoCSharp.Cli** - CLI application using Spectre.Console
-- **TapoCSharp.Example** - Simple console example
+ESM/GJS for GNOME 45+ (developed on GNOME 50). `extension.js` registers a
+`QuickSettings.SystemIndicator` containing a `QuickMenuToggle`:
+- main toggle = all plugs on/off; per-plug rows with `Ornament.CHECK` for on;
+  a "Rescan network" action; refreshes via `tapo status` on menu open.
+- custom symbolic icon at `icons/tapo-symbolic.svg`.
 
-## Core Library Architecture
+### Install / iterate
 
-### Protocol Layer
-- **TapoProtocol.cs** - Main protocol orchestrator that auto-detects device capabilities
-- **KlapProtocolHandler.cs** - Modern KLAP protocol (AES encryption) for newer devices
-- **PassthroughProtocolHandler.cs** - Legacy RSA-based protocol for older firmware
-- **KlapCipher.cs** - Cryptographic utilities for KLAP protocol
+```bash
+ln -sfn "$PWD/gnome-extension/tapo@martinalderson.com" \
+   ~/.local/share/gnome-shell/extensions/tapo@martinalderson.com
+gnome-extensions enable tapo@martinalderson.com
+# Wayland needs a logout/login to load a new extension; for dev iterate with:
+dbus-run-session -- gnome-shell --nested --wayland
+```
 
-### Device Layer  
-- **ApiClient.cs** - Main entry point, creates authenticated device handlers
-- **P100PlugHandler.cs** - Device-specific methods (OnAsync, OffAsync, GetDeviceInfoAsync)
+When changing the extension API, the authoritative reference for the installed
+shell is the bundled `quickSettings.js`, extractable with:
+`gresource extract /usr/lib64/gnome-shell/libshell-*.so /org/gnome/shell/ui/quickSettings.js`.
 
-## CLI Architecture
+## Conventions
 
-The CLI uses Spectre.Console.Cli with the following structure:
-
-### Commands
-- `tapo auth` - Configure authentication credentials
-- `tapo devices ls` - List configured devices  
-- `tapo devices add <ip> --name <name>` - Add device
-- `tapo devices rm <name>` - Remove device
-- `tapo on <device>` - Turn device on
-- `tapo off <device>` - Turn device off  
-- `tapo status <device>` - Get device status
-
-### CLI Components
-- **Commands/** - Command implementations using Spectre.Console.Cli
-- **Services/** - ConfigService (manages ~/.tapo/ config), DeviceService (device operations)
-- **Models/** - AuthConfig, DeviceConfig for configuration data
-- **Settings/** - Command-line argument settings classes
-
-## Key Design Patterns
-
-### Protocol Auto-Detection
-The library automatically tries KLAP protocol first, then falls back to Passthrough protocol. This ensures compatibility across different firmware versions.
-
-### Configuration Management
-CLI stores credentials in `~/.tapo/auth.json` and device list in `~/.tapo/devices.json` with proper file permissions.
-
-### Error Handling
-Both library and CLI use structured error handling with meaningful exceptions for authentication failures, network issues, and protocol errors.
-
-## Environment Variables
-
-For testing and examples:
-- `TAPO_USERNAME` - Tapo account email
-- `TAPO_PASSWORD` - Tapo account password  
-- `IP_ADDRESS` - Device IP address
-
-## Dependencies
-
-Core library uses minimal dependencies:
-- System.Text.Json for JSON handling
-- Built-in System.Security.Cryptography for encryption
-
-CLI additionally uses:
-- Spectre.Console for rich terminal UI
-- Spectre.Console.Cli for command-line parsing
+- The selector for control commands matches nickname / device_id / MAC / IP.
+- Prefer letting errors surface (no silent fallbacks); the cache read is the one
+  deliberate exception (tolerant by design).

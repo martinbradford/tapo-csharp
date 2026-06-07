@@ -1,169 +1,91 @@
-# TapoCSharp
+# Tapo
 
-A C# library and CLI tool for controlling TP-Link Tapo smart devices, specifically P100 smart plugs. This library implements both KLAP and Passthrough protocols for device communication.
+Control TP-Link Tapo smart plugs from Linux — a small Rust CLI plus a GNOME
+**Quick Settings** tile.
 
-## 🚀 Quick Start
+- **No manual IP entry, no network scanning.** Devices are found with a single
+  UDP broadcast (the Tapo discovery protocol on port 20002).
+- **Corruption-proof.** Credentials live in the system keyring; the device list
+  is a disposable cache that is rebuilt by `tapo discover` and written
+  atomically. (The old C# version corrupted its JSON store under concurrent
+  writes — that whole class of bug is gone.)
+- **Quick Settings dropdown.** A GNOME tile that expands to a list of your plugs,
+  each with a checkmark when it's on. Toggle one, or switch them all at once.
 
-### Build and Install CLI
+> **Why does it still need my TP-Link login if everything is local?**
+> Tapo's *local* KLAP protocol authenticates you with your TP-Link account
+> email/password — the account login doubles as the device password. Discovery
+> is unauthenticated; turning plugs on/off is not. Nothing is sent to the cloud.
 
-```bash
-# Clone and build
-git clone https://github.com/martinalderson/tapo-csharp.git
-cd tapo-csharp
+## Layout
 
-# Build all platforms
-dotnet msbuild TapoCSharp.Cli/TapoCSharp.Cli.csproj -t:PublishAll -p:Configuration=Release
+| Path | What |
+|------|------|
+| `tapo-cli/` | Rust CLI (`tapo`) — discovery + control via the [`tapo`](https://crates.io/crates/tapo) crate |
+| `gnome-extension/tapo@martinalderson.com/` | GNOME Shell quick-settings extension (GJS) |
 
-# Install on Linux (builds and installs to ~/.local/bin/tapo)
-dotnet msbuild TapoCSharp.Cli/TapoCSharp.Cli.csproj -t:Install -p:Configuration=Release
-```
+## Build & install the CLI
 
-#### CLI Usage
-
-```bash
-# Configure authentication and discover devices (first time setup)
-tapo auth
-
-# Show status of all devices
-tapo status
-
-# Show detailed status of specific device  
-tapo status "Living Room Lamp"
-
-# Control devices
-tapo on "Living Room Lamp"
-tapo off 192.168.1.100
-
-# Manage devices manually
-tapo devices add 192.168.1.100 --name "Living Room Lamp"
-tapo devices ls
-tapo devices rm "Living Room Lamp"
-```
-
-### CLI Features
-
-- 🎨 **Beautiful TUI**: Rich terminal interface with colors, tables, and spinners
-- 🔧 **Device Management**: Add, remove, and list your devices
-- ⚡ **Instant Control**: Turn devices on/off with simple commands
-- 📊 **Device Status**: View detailed device information and status
-- 🔐 **Local Storage**: Credentials stored locally in `~/.tapo/`
-
-## 📚 Library Usage
-
-### Installation
+Requires a recent Rust toolchain (edition 2021+; the `tapo` crate needs Rust ≥ 1.88).
 
 ```bash
-dotnet add package TapoCSharp
+cd tapo-cli
+cargo build --release
+install -Dm755 target/release/tapo ~/.local/bin/tapo   # ensure ~/.local/bin is on PATH
 ```
 
-### Code Example
-
-```csharp
-using TapoCSharp;
-
-var client = new ApiClient("username", "password");
-var device = await client.P100Async("192.168.1.100");
-
-// Get device information
-var deviceInfo = await device.GetDeviceInfoAsync();
-Console.WriteLine($"Device: {deviceInfo["nickname"]}");
-
-// Control device
-await device.OnAsync();
-await device.OffAsync();
-```
-
-### Environment Variables Example
+## First run
 
 ```bash
-export TAPO_USERNAME="your_tapo_username"
-export TAPO_PASSWORD="your_tapo_password" 
-export IP_ADDRESS="192.168.1.100"
-
-dotnet run --project TapoCSharp.Example
+tapo login          # prompts for your TP-Link email + password; stored in the keyring
+tapo discover       # broadcast-scan the LAN and cache the device list
+tapo status         # live on/off state of every cached device
 ```
 
-## 🏗️ Architecture
+## Usage
 
-### Core Library
-- **ApiClient.cs** - Main entry point for the library
-- **P100PlugHandler.cs** - Device-specific control methods  
-- **KlapProtocolHandler.cs** - KLAP protocol implementation
-- **PassthroughProtocolHandler.cs** - Legacy protocol support
-- **KlapCipher.cs** - Cryptographic utilities
+```
+tapo login [--username EMAIL --password PASS]   # store credentials + initial scan
+tapo logout                                     # forget credentials
+tapo discover [--timeout 5] [--target ADDR]     # rescan, refresh the cache
+tapo list                                       # cached devices (no network)
+tapo status                                     # live on/off state (parallel)
+tapo on  <selector>                             # turn a device on
+tapo off <selector>                             # turn a device off
+tapo toggle <selector>                          # toggle a device
+tapo all on | off                               # switch every controllable device
+```
 
-### CLI Tool
-- **Commands/** - CLI command implementations
-- **Services/** - Configuration and device management
-- **Models/** - Data models for config and devices
+`<selector>` matches a device by nickname (case-insensitive), device id, MAC, or
+IP. Add `--json` to any command for machine-readable output (this is what the
+GNOME extension consumes). If a plug's IP changed (DHCP), `on/off/toggle`
+auto-rescans once and retries.
 
-## 🔌 Protocol Support
+## Install the GNOME extension
 
-This library supports both communication protocols used by TP-Link Tapo devices:
-
-1. **KLAP Protocol** - Modern encrypted protocol using AES encryption (P100 v1.2+)
-2. **Passthrough Protocol** - Legacy protocol using RSA encryption (older firmware)
-
-The library automatically detects which protocol your device supports and uses the appropriate implementation.
-
-## ✨ Features
-
-- **KLAP Protocol Support**: Modern encrypted communication protocol
-- **Passthrough Protocol Support**: Legacy RSA-based protocol for older devices
-- **Automatic Protocol Detection**: Detects which protocol the device supports
-- **Device Control**: Turn devices on/off, get device information
-- **Secure Authentication**: Proper encryption and authentication handling
-- **Cross-Platform CLI**: Beautiful terminal interface for all platforms
-- **Single-File Binaries**: Self-contained executables with no dependencies
-
-## 🛠️ Building from Source
-
-### Prerequisites
-- .NET 8.0 SDK or later
-
-### Build Library
 ```bash
-git clone https://github.com/martinalderson/tapo-csharp.git
-cd tapo-csharp
-dotnet build
+ln -sfn "$PWD/gnome-extension/tapo@martinalderson.com" \
+   ~/.local/share/gnome-shell/extensions/tapo@martinalderson.com
+gnome-extensions enable tapo@martinalderson.com
 ```
 
-### Build CLI Tool
+Log out and back in (Wayland can't hot-reload the shell), then open Quick
+Settings: the **Tapo** tile appears. Click the arrow to expand the dropdown of
+plugs, click a row to toggle it, click the tile body to switch all, and use
+**Rescan network** after adding new plugs.
+
+For development you can iterate without logging out using a nested shell:
+
 ```bash
-# Debug build
-dotnet run --project TapoCSharp.Cli -- --help
-
-# Build all platforms at once
-dotnet msbuild TapoCSharp.Cli/TapoCSharp.Cli.csproj -t:PublishAll -p:Configuration=Release
-
-# Install on Linux (builds and installs to ~/.local/bin/tapo)
-dotnet msbuild TapoCSharp.Cli/TapoCSharp.Cli.csproj -t:Install -p:Configuration=Release
-
-# Manual single platform builds
-dotnet publish TapoCSharp.Cli -c Release --self-contained -p:PublishSingleFile=true -r linux-x64
-dotnet publish TapoCSharp.Cli -c Release --self-contained -p:PublishSingleFile=true -r win-x64
-dotnet publish TapoCSharp.Cli -c Release --self-contained -p:PublishSingleFile=true -r osx-x64
+dbus-run-session -- gnome-shell --nested --wayland
 ```
 
-## 🔧 Dependencies
+The extension shells out to the `tapo` binary (found on `PATH` or in
+`~/.local/bin`) asynchronously, so it never blocks the shell — and it does no
+crypto itself (GJS has no AES/RSA).
 
-- .NET 8.0 or later
-- System.Text.Json for JSON handling
-- System.Security.Cryptography for encryption operations
-- Spectre.Console for CLI interface (CLI tool only)
+## Supported devices
 
-## 🙏 Acknowledgments
-
-This implementation is based on the excellent Rust [tapo](https://github.com/mihai-dinculescu/tapo) library by Mihai Dinculescu. The protocol details and cryptographic implementations are derived from that work.
-
-## ⚠️ Disclaimer
-
-**USE AT YOUR OWN RISK**
-
-This software is provided "as is", without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose and noninfringement. In no event shall the authors or copyright holders be liable for any claim, damages or other liability, whether in an action of contract, tort or otherwise, arising from, out of or in connection with the software or the use or other dealings in the software.
-
-This is an unofficial implementation and is not affiliated with or endorsed by TP-Link Technologies Co., Ltd. Use of this software may void your device warranty.
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+Discovery lists every Tapo device on the network. On/off control currently
+targets plugs (P100/P105 and the energy-monitoring P110/P115). Bulbs, light
+strips, and power strips are discovered but not yet switchable from this tool.
