@@ -175,7 +175,18 @@ export default class TapoExtension extends Extension {
         this.tapoBin = findBinary();
         this.tapoIcon = Gio.icon_new_for_string(`${this.path}/icons/tapo-symbolic.svg`);
         this._indicator = new TapoIndicator(this);
-        Main.panel.statusArea.quickSettings.addExternalIndicator(this._indicator);
+
+        const quickSettings = Main.panel.statusArea.quickSettings;
+        quickSettings.addExternalIndicator(this._indicator);
+
+        // addExternalIndicator appends the tile to the end of the grid (below the
+        // brightness sliders), and its exact spot drifts with load order. Pin it
+        // up among the other toggles, just above the brightness section.
+        const toggle = this._indicator.quickSettingsItems[0];
+        const grid = quickSettings.menu._grid;
+        const sibling = quickSettings._brightness?.quickSettingsItems?.[0];
+        if (sibling && toggle?.get_parent() === grid)
+            grid.set_child_below_sibling(toggle, sibling);
     }
 
     disable() {
