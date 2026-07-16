@@ -11,7 +11,7 @@
     <!-- Single-file publishing configuration -->
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
-    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">linux-x64</RuntimeIdentifier>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-x64</RuntimeIdentifier>
     <PublishTrimmed>false</PublishTrimmed>
   </PropertyGroup>
 
