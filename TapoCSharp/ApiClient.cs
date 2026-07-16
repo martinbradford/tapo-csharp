@@ -26,7 +26,13 @@ public class ApiClient
         
         var handler = new HttpClientHandler()
         {
-            UseCookies = false // Disable automatic cookie handling
+            UseCookies = false, // Disable automatic cookie handling
+
+            // Tapo devices speak plain HTTP on /app and never redirect. Following
+            // redirects only matters when probing a non-Tapo device that bounces
+            // HTTP to HTTPS, where it costs a pointless TLS handshake against a
+            // device that was never going to answer. Fail fast instead.
+            AllowAutoRedirect = false
         };
         
         _httpClient = new HttpClient(handler)
@@ -43,6 +49,33 @@ public class ApiClient
     public async Task<P100PlugHandler> P100Async(string ipAddress)
     {
         var handler = new P100PlugHandler(_username, _password, ipAddress, _httpClient);
+        await handler.LoginAsync();
+        return handler;
+    }
+
+    /// <summary>
+    /// Creates a P300 power strip handler for the specified IP address.
+    /// </summary>
+    /// <param name="ipAddress">Device IP address</param>
+    /// <returns>Authenticated PowerStripHandler</returns>
+    public async Task<PowerStripHandler> P300Async(string ipAddress)
+    {
+        return await PowerStripAsync(ipAddress);
+    }
+
+    /// <summary>
+    /// Creates a P304 power strip handler for the specified IP address.
+    /// </summary>
+    /// <param name="ipAddress">Device IP address</param>
+    /// <returns>Authenticated PowerStripHandler</returns>
+    public async Task<PowerStripHandler> P304Async(string ipAddress)
+    {
+        return await PowerStripAsync(ipAddress);
+    }
+
+    private async Task<PowerStripHandler> PowerStripAsync(string ipAddress)
+    {
+        var handler = new PowerStripHandler(_username, _password, ipAddress, _httpClient);
         await handler.LoginAsync();
         return handler;
     }

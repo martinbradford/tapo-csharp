@@ -194,6 +194,17 @@ internal class PassthroughProtocolHandler : IProtocolHandler
         return result ?? throw new InvalidOperationException("No device info received");
     }
 
+    public async Task<JsonNode?> ExecuteMethodAsync(string method, object parameters)
+    {
+        return await ExecuteSecureCommandAsync(new
+        {
+            method,
+            @params = parameters,
+            requestTimeMils = 0,
+            terminalUUID = Guid.NewGuid().ToString()
+        });
+    }
+
     private async Task<JsonNode?> ExecuteSecureCommandAsync(object command)
     {
         if (_cipher == null || _token == null || _sessionCookie == null || _url == null)

@@ -95,8 +95,19 @@ internal class TapoProtocol
     {
         if (_protocolHandler == null)
             throw new InvalidOperationException("Must call LoginAsync first");
-            
+
         return await _protocolHandler.GetDeviceInfoAsync();
+    }
+
+    /// <summary>
+    /// Executes an arbitrary device method and returns its result.
+    /// </summary>
+    public async Task<JsonNode?> ExecuteMethodAsync(string method, object parameters)
+    {
+        if (_protocolHandler == null)
+            throw new InvalidOperationException("Must call LoginAsync first");
+
+        return await _protocolHandler.ExecuteMethodAsync(method, parameters);
     }
 }
 
@@ -108,6 +119,7 @@ internal interface IProtocolHandler
     Task LoginAsync(string url, string username, string password);
     Task SetDeviceInfoAsync(object deviceInfo);
     Task<JsonNode> GetDeviceInfoAsync();
+    Task<JsonNode?> ExecuteMethodAsync(string method, object parameters);
 }
 
 

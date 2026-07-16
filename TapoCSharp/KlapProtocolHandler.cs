@@ -181,6 +181,23 @@ internal class KlapProtocolHandler : IProtocolHandler
     }
 
     /// <summary>
+    /// Executes an arbitrary device method using an encrypted request.
+    /// </summary>
+    public async Task<JsonNode?> ExecuteMethodAsync(string method, object parameters)
+    {
+        if (_cipher == null)
+            throw new InvalidOperationException("Must call LoginAsync first");
+
+        var request = new
+        {
+            method,
+            @params = parameters
+        };
+
+        return await ExecuteRequestAsync<JsonNode>(request);
+    }
+
+    /// <summary>
     /// Executes an encrypted request using the KLAP protocol.
     /// </summary>
     private async Task<T?> ExecuteRequestAsync<T>(object request)
