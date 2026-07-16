@@ -7,25 +7,37 @@ using TapoCSharp.Cli.Settings;
 namespace TapoCSharp.Cli.Commands;
 
 [Description("Turn a device off")]
-public class OffCommand : AsyncCommand<DeviceCommandSettings>
+public class OffCommand : AsyncCommand<SocketCommandSettings>
 {
-    public override async Task<int> ExecuteAsync(CommandContext context, DeviceCommandSettings settings)
+    public override async Task<int> ExecuteAsync(CommandContext context, SocketCommandSettings settings)
     {
         try
         {
             var configService = new ConfigService();
             var deviceService = new DeviceService(configService);
 
+            var target = string.IsNullOrWhiteSpace(settings.Socket)
+                ? $"Device '{settings.Device}'"
+                : $"Socket '{settings.Socket}' on '{settings.Device}'";
+
             await AnsiConsole.Status()
                 .Spinner(Spinner.Known.Dots)
                 .StartAsync($"Turning off {settings.Device}...", async ctx =>
                 {
-                    var device = await deviceService.ConnectToDeviceAsync(settings.Device);
-                    if (device != null)
-                        await device.OffAsync();
+                    if (string.IsNullOrWhiteSpace(settings.Socket))
+                    {
+                        var device = await deviceService.ConnectToDeviceAsync(settings.Device);
+                        if (device != null)
+                            await device.OffAsync();
+                    }
+                    else
+                    {
+                        var socket = await deviceService.ConnectToSocketAsync(settings.Device, settings.Socket);
+                        await socket.OffAsync();
+                    }
                 });
 
-            AnsiConsole.MarkupLine($"[green]✓[/] Device '{settings.Device}' turned off successfully!");
+            AnsiConsole.MarkupLine($"[green]✓[/] {target} turned off successfully!");
             return 0;
         }
         catch (Exception ex)

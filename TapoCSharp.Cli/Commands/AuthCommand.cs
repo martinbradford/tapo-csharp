@@ -67,7 +67,7 @@ public class AuthCommand : Command<GlobalSettings>
                 {
                     try
                     {
-                        var (success, model, error) = await deviceService.TestDeviceConnectionAsync(knownIp);
+                        var (success, model, _, error) = await deviceService.TestDeviceConnectionAsync(knownIp);
                         if (!success)
                         {
                             throw new InvalidOperationException($"Failed to connect to device: {error}");
@@ -89,7 +89,7 @@ public class AuthCommand : Command<GlobalSettings>
             if (scanNetwork)
             {
                 var networkScanService = new NetworkScanService(deviceService);
-                var foundDevices = new List<(string ip, string model)>();
+                var foundDevices = new List<(string ip, string model, string nickname)>();
                 
                 await AnsiConsole.Progress()
                     .StartAsync(async ctx =>
@@ -113,56 +113,37 @@ public class AuthCommand : Command<GlobalSettings>
                     var table = new Table();
                     table.AddColumn("IP Address");
                     table.AddColumn("Model");
-                    
+                    table.AddColumn("Name");
+
                     foreach (var device in foundDevices)
                     {
-                        table.AddRow(device.ip, device.model);
+                        table.AddRow(device.ip, device.model, Markup.Escape(device.nickname));
                     }
-                    
+
                     AnsiConsole.Write(table);
-                    
+
                     bool addDevices = AnsiConsole.Confirm("Add devices to configuration?", defaultValue: true);
                     if (addDevices)
                     {
                         AnsiConsole.WriteLine();
                         AnsiConsole.MarkupLine("[blue]Adding devices with their actual names...[/]");
-                        
+
                         foreach (var device in foundDevices)
                         {
-                            // Get the device info to extract the actual nickname
-                            try
+                            // The scan already reported each device's own nickname; fall back to a
+                            // generated name only when the device has none set.
+                            var deviceName = device.nickname != "Unnamed Device"
+                                ? device.nickname
+                                : $"{device.model.Replace("Tapo ", "")} {device.ip.Split('.').Last()}";
+
+                            await configService.AddDeviceAsync(new DeviceConfig
                             {
-                                var client = new TapoCSharp.ApiClient(username, password);
-                                var deviceHandler = await client.P100Async(device.ip);
-                                var deviceInfo = await deviceHandler.GetDeviceInfoAsync();
-                                
-                                var encodedNickname = deviceInfo?["nickname"]?.ToString();
-                                var deviceName = DeviceService.DecodeNickname(encodedNickname);
-                                
-                                var deviceConfig = new DeviceConfig
-                                {
-                                    Name = deviceName,
-                                    IpAddress = device.ip,
-                                    Model = device.model
-                                };
-                                
-                                await configService.AddDeviceAsync(deviceConfig);
-                            }
-                            catch
-                            {
-                                // If we can't get device info, fall back to a generated name
-                                var fallbackName = $"{device.model.Replace("Tapo ", "")} {device.ip.Split('.').Last()}";
-                                var deviceConfig = new DeviceConfig
-                                {
-                                    Name = fallbackName,
-                                    IpAddress = device.ip,
-                                    Model = device.model
-                                };
-                                
-                                await configService.AddDeviceAsync(deviceConfig);
-                            }
+                                Name = deviceName,
+                                IpAddress = device.ip,
+                                Model = device.model
+                            });
                         }
-                        
+
                         AnsiConsole.MarkupLine($"[green]✓[/] Added {foundDevices.Count} device(s) to your configuration!");
                     }
                 }

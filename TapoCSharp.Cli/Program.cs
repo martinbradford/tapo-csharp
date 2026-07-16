@@ -18,6 +18,7 @@ app.Configure(config =>
         devices.AddCommand<ListDevicesCommand>("ls");
         devices.AddCommand<AddDeviceCommand>("add");
         devices.AddCommand<RemoveDeviceCommand>("rm");
+        devices.AddCommand<ScanDevicesCommand>("scan");
     });
     
     config.AddCommand<OnCommand>("on");

@@ -15,6 +15,53 @@ public class DeviceService
 
     public async Task<P100PlugHandler?> ConnectToDeviceAsync(string ipOrName)
     {
+        var (client, ipAddress, device) = await ResolveTargetAsync(ipOrName);
+
+        try
+        {
+            var plugHandler = await client.P100Async(ipAddress);
+            await MarkSeenAsync(device);
+            return plugHandler;
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"Failed to connect to device at {ipAddress}: {ex.Message}", ex);
+        }
+    }
+
+    /// <summary>
+    /// Connects to a power strip and resolves one of its sockets, addressed either
+    /// by name or by position on the strip.
+    /// </summary>
+    public async Task<PowerStripSocket> ConnectToSocketAsync(string ipOrName, string socket)
+    {
+        var (client, ipAddress, device) = await ResolveTargetAsync(ipOrName);
+
+        PowerStripHandler strip;
+        try
+        {
+            strip = await client.P304Async(ipAddress);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"Failed to connect to device at {ipAddress}: {ex.Message}", ex);
+        }
+
+        // Socket lookup failures carry their own message listing what is available,
+        // so they are deliberately not wrapped as connection errors.
+        var resolved = int.TryParse(socket, out var position)
+            ? await strip.GetSocketAsync(position)
+            : await strip.GetSocketAsync(socket);
+
+        await MarkSeenAsync(device);
+        return resolved;
+    }
+
+    /// <summary>
+    /// Resolves a device name or IP to an authenticated client and its address.
+    /// </summary>
+    private async Task<(ApiClient client, string ipAddress, DeviceConfig? device)> ResolveTargetAsync(string ipOrName)
+    {
         var auth = await _configService.LoadAuthConfigAsync();
         if (auth == null)
         {
@@ -30,46 +77,39 @@ public class DeviceService
             throw new ArgumentException($"Invalid IP address: {ipAddress}");
         }
 
-        try
-        {
-            var client = new ApiClient(auth.Username, auth.Password);
-            var plugHandler = await client.P100Async(ipAddress);
-            
-            // Update last seen time if this was a saved device
-            if (device != null)
-            {
-                device.LastSeen = DateTime.UtcNow;
-                await _configService.AddDeviceAsync(device);
-            }
+        return (new ApiClient(auth.Username, auth.Password), ipAddress, device);
+    }
 
-            return plugHandler;
-        }
-        catch (Exception ex)
+    private async Task MarkSeenAsync(DeviceConfig? device)
+    {
+        if (device != null)
         {
-            throw new InvalidOperationException($"Failed to connect to device at {ipAddress}: {ex.Message}", ex);
+            device.LastSeen = DateTime.UtcNow;
+            await _configService.AddDeviceAsync(device);
         }
     }
 
-    public async Task<(bool success, string? model, string? error)> TestDeviceConnectionAsync(string ipAddress)
+    public async Task<(bool success, string? model, string? nickname, string? error)> TestDeviceConnectionAsync(string ipAddress)
     {
         try
         {
             var auth = await _configService.LoadAuthConfigAsync();
             if (auth == null)
             {
-                return (false, null, "Authentication not configured");
+                return (false, null, null, "Authentication not configured");
             }
 
             var client = new ApiClient(auth.Username, auth.Password);
             var device = await client.P100Async(ipAddress);
             var deviceInfo = await device.GetDeviceInfoAsync();
-            
+
             var model = deviceInfo?["model"]?.ToString();
-            return (true, model, null);
+            var nickname = DecodeNickname(deviceInfo?["nickname"]?.ToString());
+            return (true, model, nickname, null);
         }
         catch (Exception ex)
         {
-            return (false, null, ex.Message);
+            return (false, null, null, ex.Message);
         }
     }
 

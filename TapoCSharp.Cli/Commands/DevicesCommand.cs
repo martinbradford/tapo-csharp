@@ -17,7 +17,80 @@ public class DevicesCommand : Command<GlobalSettings>
         AnsiConsole.MarkupLine("  [blue]tapo devices ls[/]     - List devices");
         AnsiConsole.MarkupLine("  [blue]tapo devices add[/]    - Add a device");
         AnsiConsole.MarkupLine("  [blue]tapo devices rm[/]     - Remove a device");
+        AnsiConsole.MarkupLine("  [blue]tapo devices scan[/]   - Find devices on the network");
         return 0;
+    }
+}
+
+[Description("Scan the local network for Tapo devices")]
+public class ScanDevicesCommand : AsyncCommand<ScanDevicesSettings>
+{
+    public override async Task<int> ExecuteAsync(CommandContext context, ScanDevicesSettings settings)
+    {
+        try
+        {
+            var configService = new ConfigService();
+            var deviceService = new DeviceService(configService);
+            var scanService = new NetworkScanService(deviceService);
+
+            var auth = await configService.LoadAuthConfigAsync();
+            if (auth == null)
+            {
+                AnsiConsole.MarkupLine("[red]✗ Error: Authentication not configured. Run 'tapo auth' first.[/]");
+                return 1;
+            }
+
+            if (settings.TimeoutMs < 1)
+            {
+                AnsiConsole.MarkupLine("[red]✗ Error: --timeout must be at least 1 millisecond.[/]");
+                return 1;
+            }
+
+            List<(string ip, string model, string nickname)> found = new();
+
+            await AnsiConsole.Status()
+                .Spinner(Spinner.Known.Dots)
+                .StartAsync("Scanning network...", async ctx =>
+                {
+                    var progress = new Progress<string>(message => ctx.Status(Markup.Escape(message)));
+                    found = await scanService.ScanSubnetAsync(settings.Subnet, progress, settings.TimeoutMs);
+                });
+
+            if (found.Count == 0)
+            {
+                AnsiConsole.MarkupLine("[yellow]No Tapo devices found.[/]");
+                AnsiConsole.MarkupLine("[dim]Devices must be reachable and your Tapo credentials must match the account they are bound to.[/]");
+                return 0;
+            }
+
+            var known = await deviceService.GetAllDevicesAsync();
+
+            var table = new Table();
+            table.AddColumn("IP Address");
+            table.AddColumn("Model");
+            table.AddColumn("Name");
+            table.AddColumn("Configured");
+
+            foreach (var (ip, model, nickname) in found)
+            {
+                var isKnown = known.Any(d => d.IpAddress.Equals(ip, StringComparison.OrdinalIgnoreCase));
+                table.AddRow(
+                    ip,
+                    model,
+                    Markup.Escape(nickname),
+                    isKnown ? "[green]yes[/]" : "[dim]no[/]");
+            }
+
+            AnsiConsole.Write(table);
+            AnsiConsole.MarkupLine($"[green]✓[/] Found {found.Count} device(s).");
+            AnsiConsole.MarkupLine("[dim]Add one with: [/][blue]tapo devices add <ip>[/]");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]✗ Error: {Markup.Escape(ex.Message)}[/]");
+            return 1;
+        }
     }
 }
 
@@ -81,50 +154,33 @@ public class AddDeviceCommand : AsyncCommand<AddDeviceSettings>
 
             // Test connection first
             string? model = null;
+            string? nickname = null;
             await AnsiConsole.Status()
                 .Spinner(Spinner.Known.Dots)
                 .StartAsync($"Testing connection to {settings.IpAddress}...", async ctx =>
                 {
-                    var (success, deviceModel, error) = await deviceService.TestDeviceConnectionAsync(settings.IpAddress);
+                    var (success, deviceModel, deviceNickname, error) = await deviceService.TestDeviceConnectionAsync(settings.IpAddress);
                     if (!success)
                     {
                         throw new InvalidOperationException($"Cannot connect to device: {error}");
                     }
                     model = deviceModel;
+                    nickname = deviceNickname;
                 });
 
             AnsiConsole.MarkupLine($"[green]✓[/] Successfully connected to {model ?? "device"}");
 
-            // Get device name - try to use the device's actual nickname first
+            // Get device name - the connection test already reported the device's own nickname
             var deviceName = settings.Name;
             if (string.IsNullOrEmpty(deviceName))
             {
-                // Try to get the device's actual nickname
-                try
+                if (!string.IsNullOrEmpty(nickname) && nickname != "Unnamed Device")
                 {
-                    var auth = await configService.LoadAuthConfigAsync();
-                    if (auth != null)
-                    {
-                        var client = new TapoCSharp.ApiClient(auth.Username, auth.Password);
-                        var deviceHandler = await client.P100Async(settings.IpAddress);
-                        var deviceInfo = await deviceHandler.GetDeviceInfoAsync();
-                        
-                        var encodedNickname = deviceInfo?["nickname"]?.ToString();
-                        var decodedName = DeviceService.DecodeNickname(encodedNickname);
-                        
-                        if (decodedName != "Unnamed Device")
-                        {
-                            deviceName = decodedName;
-                            AnsiConsole.MarkupLine($"[cyan]Using device's configured name: '{deviceName}'[/]");
-                        }
-                    }
+                    deviceName = nickname;
+                    AnsiConsole.MarkupLine($"[cyan]Using device's configured name: '{deviceName}'[/]");
                 }
-                catch
-                {
-                    // If we can't get the nickname, continue to ask user
-                }
-                
-                // If we still don't have a name, ask the user
+
+                // If the device has no usable nickname, ask the user
                 if (string.IsNullOrEmpty(deviceName) || deviceName == "Unnamed Device")
                 {
                     deviceName = AnsiConsole.Ask<string>("Enter a name for this device:");

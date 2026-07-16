@@ -9,14 +9,25 @@ using TapoCSharp.Cli.Settings;
 namespace TapoCSharp.Cli.Commands;
 
 [Description("Show device status and information")]
-public class StatusCommand : AsyncCommand<DeviceCommandSettings>
+public class StatusCommand : AsyncCommand<StatusCommandSettings>
 {
-    public override async Task<int> ExecuteAsync(CommandContext context, DeviceCommandSettings settings)
+    public override async Task<int> ExecuteAsync(CommandContext context, StatusCommandSettings settings)
     {
         try
         {
             var configService = new ConfigService();
             var deviceService = new DeviceService(configService);
+
+            if (!string.IsNullOrWhiteSpace(settings.Socket))
+            {
+                if (string.IsNullOrWhiteSpace(settings.Device))
+                {
+                    AnsiConsole.MarkupLine("[red]✗ Error: --socket needs a device; specify which power strip the socket is on.[/]");
+                    return 1;
+                }
+
+                return await ShowSocketStatusAsync(deviceService, settings.Device, settings.Socket);
+            }
 
             if (string.IsNullOrEmpty(settings.Device))
             {
@@ -34,6 +45,36 @@ public class StatusCommand : AsyncCommand<DeviceCommandSettings>
             AnsiConsole.MarkupLine($"[red]✗ Error: {ex.Message}[/]");
             return 1;
         }
+    }
+
+    private async Task<int> ShowSocketStatusAsync(DeviceService deviceService, string deviceName, string socketName)
+    {
+        PowerStripSocket? socket = null;
+        JsonNode? socketInfo = null;
+
+        await AnsiConsole.Status()
+            .Spinner(Spinner.Known.Dots)
+            .StartAsync($"Getting status for socket {socketName} on {deviceName}...", async ctx =>
+            {
+                socket = await deviceService.ConnectToSocketAsync(deviceName, socketName);
+                socketInfo = await socket.GetDeviceInfoAsync();
+            });
+
+        if (socket == null || socketInfo == null)
+        {
+            AnsiConsole.MarkupLine("[red]✗ Failed to retrieve socket information[/]");
+            return 1;
+        }
+
+        var deviceOn = socketInfo["device_on"]?.GetValue<bool>() ?? socket.DeviceOn;
+
+        var panel = new Panel(CreateSocketInfoTable(socketInfo, socket))
+            .Header($" {socket.Nickname} (socket {socket.Position}) ")
+            .Border(BoxBorder.Rounded)
+            .BorderColor(deviceOn ? Color.Green : Color.Red);
+
+        AnsiConsole.Write(panel);
+        return 0;
     }
 
     private async Task<int> ShowSingleDeviceStatusAsync(DeviceService deviceService, string deviceName)
@@ -54,8 +95,12 @@ public class StatusCommand : AsyncCommand<DeviceCommandSettings>
             return 1;
         }
 
-        // Create a panel with device information
-        var nickname = deviceInfo["nickname"]?.ToString() ?? "Device";
+        // Create a panel with device information. The device reports its nickname
+        // Base64-encoded, so it has to be decoded before display.
+        var encodedNickname = deviceInfo["nickname"]?.ToString();
+        var nickname = string.IsNullOrEmpty(encodedNickname)
+            ? "Device"
+            : DeviceService.DecodeNickname(encodedNickname);
         var deviceOn = deviceInfo["device_on"]?.GetValue<bool>() ?? false;
         
         var panel = new Panel(CreateDeviceInfoTable(deviceInfo))
@@ -152,6 +197,63 @@ public class StatusCommand : AsyncCommand<DeviceCommandSettings>
         return 0;
     }
 
+    /// <summary>
+    /// Builds the detail table for a power strip socket. A socket reports a different
+    /// field set to a standalone plug - no ip/ssid/rssi, but it does carry the strip's
+    /// protection statuses.
+    /// </summary>
+    private static Table CreateSocketInfoTable(JsonNode socketInfo, PowerStripSocket socket)
+    {
+        var table = new Table();
+        table.AddColumn("Property");
+        table.AddColumn("Value");
+        table.Border = TableBorder.None;
+        table.ShowHeaders = false;
+
+        var deviceOn = socketInfo["device_on"]?.GetValue<bool>() ?? socket.DeviceOn;
+        table.AddRow("[bold]Power State[/]", deviceOn ? "[green]On[/]" : "[red]Off[/]");
+        table.AddRow("Position", socket.Position.ToString());
+        table.AddRow("Model", socketInfo["model"]?.ToString() ?? "Unknown");
+
+        if (socketInfo["on_time"]?.GetValue<int?>() is int onTime && onTime > 0)
+        {
+            table.AddRow("On Time", FormatTimeSpan(TimeSpan.FromSeconds(onTime)));
+        }
+
+        // Protection statuses: anything other than "normal" is worth highlighting.
+        AddStatusRow(table, "Overheat", socketInfo["overheat_status"]?.ToString());
+        AddStatusRow(table, "Overcurrent", socketInfo["overcurrent_status"]?.ToString());
+        AddStatusRow(table, "Power Protection", socketInfo["power_protection_status"]?.ToString());
+
+        var autoOff = socketInfo["auto_off_status"]?.ToString();
+        if (!string.IsNullOrEmpty(autoOff))
+        {
+            var remain = socketInfo["auto_off_remain_time"]?.GetValue<int?>() ?? 0;
+            table.AddRow("Auto Off", autoOff == "on" && remain > 0
+                ? $"on ({FormatTimeSpan(TimeSpan.FromSeconds(remain))} remaining)"
+                : autoOff);
+        }
+
+        var firmware = socketInfo["fw_ver"]?.ToString();
+        if (!string.IsNullOrEmpty(firmware))
+        {
+            table.AddRow("Firmware", firmware);
+        }
+
+        table.AddRow("Device ID", $"[dim]{socket.DeviceId}[/]");
+        return table;
+    }
+
+    private static void AddStatusRow(Table table, string label, string? status)
+    {
+        if (string.IsNullOrEmpty(status))
+        {
+            return;
+        }
+
+        table.AddRow(label, status == "normal" ? "[green]normal[/]" : $"[red]{status}[/]");
+    }
+
     private static Table CreateDeviceInfoTable(JsonNode deviceInfo)
     {
         var table = new Table();
@@ -179,11 +281,11 @@ public class StatusCommand : AsyncCommand<DeviceCommandSettings>
         table.AddRow("Firmware", firmware);
         table.AddRow("Hardware", hardware);
 
-        // Network info
+        // Network info - the SSID is Base64-encoded like the nickname
         var ssid = deviceInfo["ssid"]?.ToString();
         if (!string.IsNullOrEmpty(ssid))
         {
-            table.AddRow("Wi-Fi SSID", ssid);
+            table.AddRow("Wi-Fi SSID", Markup.Escape(DeviceService.DecodeNickname(ssid)));
         }
         
         if (deviceInfo["rssi"]?.GetValue<int?>() is int rssi)
