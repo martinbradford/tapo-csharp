@@ -1,0 +1,34 @@
+﻿<Project Sdk="WixToolset.Sdk/7.0.0">
+	<PropertyGroup>
+		<RuntimeIdentifier>win-x64</RuntimeIdentifier>
+	</PropertyGroup>
+
+
+		<PropertyGroup>
+			<AcceptEula>wix7</AcceptEula>
+		</PropertyGroup>
+
+
+	<ItemGroup>
+		<ProjectReference Include="..\TapoCSharp.Cli\TapoCSharp.Cli.csproj">
+			<DoNotHarvest>true</DoNotHarvest>
+			<Properties>
+				RuntimeIdentifier=$(RuntimeIdentifier);
+				PublishSingleFile=true;
+				SelfContained=true;
+			</Properties>
+		</ProjectReference>
+	</ItemGroup>
+
+	<!-- Harvest the published output -->
+	<ItemGroup>
+		<HeatDirectory Include="..\TapoCSharp.Cli\bin\$(Configuration)\net8.0\$(RuntimeIdentifier)\publish">
+			<DirectoryRefId>INSTALLFOLDER</DirectoryRefId>
+			<ComponentGroupName>CliComponents</ComponentGroupName>
+			<SuppressFragments>true</SuppressFragments>
+			<SuppressRegistry>true</SuppressRegistry>
+			<SuppressCom>true</SuppressCom>
+			<PreprocessorVariable>var.PublishDir</PreprocessorVariable>
+		</HeatDirectory>
+	</ItemGroup>
+</Project>

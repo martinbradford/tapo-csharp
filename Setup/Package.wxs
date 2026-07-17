@@ -1,0 +1,18 @@
+﻿<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+	<Package Id="G8MABTapo.Setup" Name="Tapo CLI" Manufacturer="G8MAB" Version="1.0.0" UpgradeCode="YOUR-GUID-HERE">
+		<MajorUpgrade DowngradeErrorMessage="!(loc.DowngradeError)" />
+
+		<StandardDirectory Id="ProgramFiles64Folder">
+			<Directory Id="INSTALLFOLDER" Name="Tapo CLI" />
+		</StandardDirectory>
+
+		<Feature Id="Main" Title="Tapo CLI" Level="1">
+			<ComponentGroupRef Id="CliComponents" />
+		</Feature>
+
+		<!-- Add to PATH (optional) -->
+		<Component Directory="INSTALLFOLDER" Id="PathEnvVar">
+			<Environment Id="PATH" Name="PATH" Value="[INSTALLFOLDER]" Permanent="no" Part="last" Action="set" System="yes" />
+		</Component>
+	</Package>
+</Wix>
